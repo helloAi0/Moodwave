@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+@theme {
+  /* This adds the custom pulse animation to Tailwind's brain */
+  @keyframes slow-glow {
+    0% { box-shadow: 0 0 5px rgba(59, 130, 246, 0.5); }
+    100% { box-shadow: 0 0 20px rgba(59, 130, 246, 0.8); }
+  }
+  --animate-glow: slow-glow 2s infinite alternate;
+}
+
+:root {
+  --background: #0f172a;
+  --foreground: #ffffff;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+  margin: 0;
+}

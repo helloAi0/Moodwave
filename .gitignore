@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+.env
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+postgres_data/
+
+# IDE
+.vscode/
+.idea/frontend/moodwave/venv/
+frontend/moodwave/venv/
+venv/

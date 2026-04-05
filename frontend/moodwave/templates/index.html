@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MoodWave</title>
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg:      #0d0f14;
+    --surface: #161920;
+    --border:  #2a2d38;
+    --text:    #e8eaf0;
+    --muted:   #6b6f80;
+    --teal:    #1db98c;
+    --amber:   #f0a030;
+    --red:     #e05555;
+    --blue:    #4a90d9;
+    --purple:  #8b7fe8;
+  }
+  body { background:var(--bg); color:var(--text); font-family:'Segoe UI',system-ui,sans-serif; min-height:100vh; display:grid; grid-template-rows:auto 1fr auto; }
+
+  header { display:flex; align-items:center; gap:10px; padding:14px 28px; border-bottom:1px solid var(--border); }
+  .logo { font-size:20px; font-weight:600; letter-spacing:-0.3px; }
+  .logo span { color:var(--teal); }
+  .status-dot { width:8px; height:8px; border-radius:50%; background:var(--muted); margin-left:auto; transition:background .4s; }
+  .status-dot.live { background:var(--teal); box-shadow:0 0 6px var(--teal); }
+  .status-label { font-size:12px; color:var(--muted); }
+
+  main { display:grid; grid-template-columns:1fr 320px; gap:18px; padding:18px 28px; align-items:start; }
+
+  .camera-panel { background:var(--surface); border:1px solid var(--border); border-radius:14px; overflow:hidden; }
+
+  /* The camera image — stretches to panel width, fixed height so layout never jumps */
+  #videoFeed {
+    width:100%; display:block; height:360px;
+    object-fit:cover; background:#000;
+    /* smooth the MJPEG frame transitions */
+    image-rendering: auto;
+  }
+
+  .mood-bar { display:flex; align-items:center; gap:14px; padding:12px 16px; border-top:1px solid var(--border); }
+  .mood-pill { font-size:13px; font-weight:600; padding:4px 14px; border-radius:20px; background:var(--border); color:var(--text); text-transform:capitalize; transition:background .5s,color .5s; min-width:80px; text-align:center; }
+  .track-name { font-size:12px; color:var(--muted); flex:1; }
+  .track-name span { color:var(--text); }
+  .progress-wrap { padding:0 16px 12px; }
+  .progress-label { font-size:11px; color:var(--muted); margin-bottom:5px; }
+  .progress-track { background:var(--border); height:3px; border-radius:3px; overflow:hidden; }
+  .progress-fill  { height:100%; background:var(--teal); width:0%; transition:width 1.2s ease; }
+
+  /* Banner shown if MJPEG stream errors */
+  #camBanner {
+    display:none; padding:10px 16px;
+    background:#2a1800; border-top:1px solid #5a3010;
+    font-size:12px; color:var(--amber); line-height:1.7;
+  }
+  #camBanner button {
+    margin-top:6px; padding:4px 12px; background:transparent;
+    border:1px solid var(--amber); color:var(--amber);
+    border-radius:6px; cursor:pointer; font-size:12px;
+  }
+  #camBanner button:hover { background:#5a3010; }
+
+  .side-panel { display:flex; flex-direction:column; gap:14px; }
+  .card { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:14px 16px; }
+  .card-title { font-size:11px; font-weight:600; color:var(--muted); text-transform:uppercase; letter-spacing:.6px; margin-bottom:10px; }
+
+  .mood-big { display:flex; flex-direction:column; align-items:center; gap:5px; padding:8px 0; }
+  .mood-icon { font-size:48px; line-height:1; }
+  .mood-word { font-size:17px; font-weight:600; text-transform:capitalize; color:var(--teal); transition:color .5s; }
+  .mood-sub  { font-size:12px; color:var(--muted); text-align:center; line-height:1.5; }
+
+  .journey { display:flex; gap:5px; flex-wrap:wrap; }
+  .journey-step { font-size:11px; padding:3px 9px; border-radius:7px; background:var(--border); color:var(--muted); transition:all .4s; }
+  .journey-step.done   { background:#0f3d2e; color:var(--teal); }
+  .journey-step.active { background:var(--teal); color:#fff; font-weight:600; }
+
+  #historyChart { max-height:170px; }
+
+  .log-feed { max-height:150px; overflow-y:auto; scrollbar-width:thin; }
+  .log-entry { display:flex; gap:8px; align-items:center; padding:4px 0; border-bottom:1px solid var(--border); font-size:12px; }
+  .log-entry:last-child { border:none; }
+  .log-time  { color:var(--muted); min-width:56px; }
+  .log-mood  { text-transform:capitalize; }
+  .log-track { color:var(--muted); flex:1; text-align:right; }
+
+  footer { padding:10px 28px; border-top:1px solid var(--border); font-size:12px; color:var(--muted); display:flex; gap:16px; }
+
+  .pill-angry   { background:#3d1a1a; color:var(--red); }
+  .pill-sad     { background:#1a1f3d; color:var(--blue); }
+  .pill-fear    { background:#2a1f3d; color:var(--purple); }
+  .pill-neutral { background:#1e2030; color:var(--muted); }
+  .pill-happy   { background:#0f2e1e; color:var(--teal); }
+  .pill-surprise{ background:#2d2010; color:var(--amber); }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">Mood<span>Wave</span></div>
+  <div class="status-label" id="statusLabel">Connecting…</div>
+  <div class="status-dot" id="statusDot"></div>
+</header>
+
+<main>
+  <div class="camera-panel">
+
+    <!--
+      MJPEG stream from Flask /video_feed.
+      The browser renders multipart/x-mixed-replace natively as a live feed.
+      No getUserMedia(), no JS camera API — the backend owns the DroidCam connection.
+    -->
+    <img id="videoFeed" src="/video_feed" alt="Camera feed">
+
+    <div id="camBanner">
+      Stream not responding. Check DroidCam is open on your phone and the IP
+      in app.py is correct, then click Reconnect.
+      <br>
+      <button onclick="reconnectFeed()">Reconnect stream</button>
+    </div>
+
+    <div class="mood-bar">
+      <div class="mood-pill" id="moodPill">—</div>
+      <div class="track-name">Now playing: <span id="trackName">waiting…</span></div>
+    </div>
+    <div class="progress-wrap">
+      <div class="progress-label">Iso-Principle journey progress</div>
+      <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+    </div>
+  </div>
+
+  <div class="side-panel">
+    <div class="card">
+      <div class="card-title">Current state</div>
+      <div class="mood-big">
+        <div class="mood-icon" id="moodIcon">😐</div>
+        <div class="mood-word" id="moodWord">Detecting…</div>
+        <div class="mood-sub"  id="moodSub">Point your face at the camera</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Iso journey</div>
+      <div class="journey" id="journeySteps"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">This week</div>
+      <canvas id="historyChart"></canvas>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Live log</div>
+      <div class="log-feed" id="logFeed"></div>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <span>MoodWave Desktop v1.2</span>
+  <span>All data stored locally · No cloud upload</span>
+</footer>
+
+<script>
+// ── MJPEG watchdog ────────────────────────────────────────────────────────────
+// If the image stops updating for >4 seconds, show the error banner.
+// Reloading the img src forces the browser to open a fresh MJPEG connection.
+let lastFrameTime = Date.now();
+const feedImg = document.getElementById('videoFeed');
+const banner  = document.getElementById('camBanner');
+
+feedImg.addEventListener('load', () => {
+  lastFrameTime = Date.now();
+  banner.style.display = 'none';
+});
+
+// Check every 4 seconds whether we've received a frame recently
+setInterval(() => {
+  if (Date.now() - lastFrameTime > 4000) {
+    banner.style.display = 'block';
+  }
+}, 4000);
+
+function reconnectFeed() {
+  banner.style.display = 'none';
+  lastFrameTime = Date.now();
+  // Cache-bust the URL so the browser opens a fresh connection
+  feedImg.src = '/video_feed?t=' + Date.now();
+}
+
+// ── SocketIO ──────────────────────────────────────────────────────────────────
+const socket = io();
+const dot    = document.getElementById('statusDot');
+const label  = document.getElementById('statusLabel');
+
+socket.on('connect',    () => { dot.classList.add('live');    label.textContent = 'Live'; });
+socket.on('disconnect', () => { dot.classList.remove('live'); label.textContent = 'Disconnected'; });
+
+// ── Mood data ─────────────────────────────────────────────────────────────────
+const MOOD_META = {
+  angry:    { icon:'😠', color:'var(--red)',    sub:'Taking you to calm waters…' },
+  stressed: { icon:'😰', color:'var(--red)',    sub:'Starting with ambient 60bpm…' },
+  sad:      { icon:'😢', color:'var(--blue)',   sub:'Meeting you here, gently lifting…' },
+  fear:     { icon:'😨', color:'var(--purple)', sub:'Grounding you first…' },
+  neutral:  { icon:'😐', color:'var(--muted)',  sub:'Nudging toward focus…' },
+  happy:    { icon:'😄', color:'var(--teal)',   sub:'Keeping the good vibes going!' },
+  surprise: { icon:'😲', color:'var(--amber)',  sub:'Settling you in…' },
+  disgust:  { icon:'😒', color:'var(--purple)', sub:'Let\'s shift this feeling…' },
+};
+const ISO_TRANSITIONS = {
+  angry:    ['ambient 60bpm','lo-fi 80bpm','pop 120bpm'],
+  stressed: ['ambient 60bpm','acoustic 90bpm','pop 120bpm'],
+  sad:      ['sad 50bpm','slow pop 80bpm','upbeat 110bpm'],
+  fear:     ['calm 55bpm','neutral 90bpm','energetic 115bpm'],
+  neutral:  ['lo-fi 80bpm','pop 120bpm'],
+  happy:    ['happy 120bpm'],
+  surprise: ['neutral 90bpm','energetic 115bpm'],
+  disgust:  ['calm 55bpm','neutral 90bpm'],
+};
+
+let lastMood = null;
+
+socket.on('mood_update', data => {
+  const { mood, track, progress } = data;
+  const meta = MOOD_META[mood] || MOOD_META.neutral;
+
+  const pill = document.getElementById('moodPill');
+  pill.textContent = mood;
+  pill.className = 'mood-pill pill-' + mood;
+
+  document.getElementById('moodIcon').textContent  = meta.icon;
+  document.getElementById('moodWord').textContent  = mood;
+  document.getElementById('moodWord').style.color  = meta.color;
+  document.getElementById('moodSub').textContent   = meta.sub;
+  document.getElementById('trackName').textContent = track.replace(/_/g,' ');
+  document.getElementById('progressFill').style.width = progress + '%';
+
+  if (mood !== lastMood) { lastMood = mood; renderJourney(mood, track); }
+  else updateJourneyActive(track);
+
+  addLogEntry(mood, track);
+  if (Math.random() < 0.05) loadChart();
+});
+
+// ── Journey ───────────────────────────────────────────────────────────────────
+function renderJourney(mood, currentTrack) {
+  const steps = ISO_TRANSITIONS[mood] || ['—'];
+  const c = document.getElementById('journeySteps');
+  c.innerHTML = '';
+  steps.forEach(s => {
+    const el = document.createElement('div');
+    el.className = 'journey-step';
+    el.dataset.track = s;
+    el.textContent = s;
+    c.appendChild(el);
+  });
+  updateJourneyActive(currentTrack);
+}
+
+function updateJourneyActive(currentTrack) {
+  const norm = currentTrack.replace(/_/g,' ');
+  let found = false;
+  document.querySelectorAll('.journey-step').forEach(el => {
+    if (el.dataset.track === norm) { el.className = 'journey-step active'; found = true; }
+    else if (!found)               { el.className = 'journey-step done'; }
+    else                           { el.className = 'journey-step'; }
+  });
+}
+
+// ── Log ───────────────────────────────────────────────────────────────────────
+function addLogEntry(mood, track) {
+  const feed = document.getElementById('logFeed');
+  const now  = new Date().toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  const el   = document.createElement('div');
+  el.className = 'log-entry';
+  el.innerHTML = `<span class="log-time">${now}</span>
+                  <span class="log-mood">${mood}</span>
+                  <span class="log-track">${track.replace(/_/g,' ')}</span>`;
+  feed.prepend(el);
+  while (feed.children.length > 50) feed.lastChild.remove();
+}
+
+// ── Chart ─────────────────────────────────────────────────────────────────────
+let chartInst = null;
+async function loadChart() {
+  try {
+    const res  = await fetch('/history');
+    const data = await res.json();
+    const labels = Object.keys(data.weekly);
+    const values = Object.values(data.weekly);
+    const cmap   = { angry:'#e05555',stressed:'#e05555',sad:'#4a90d9',fear:'#8b7fe8',neutral:'#6b6f80',happy:'#1db98c',surprise:'#f0a030',disgust:'#8b7fe8' };
+    const colors = labels.map(m => cmap[m] || '#6b6f80');
+    const ctx = document.getElementById('historyChart');
+    if (chartInst) chartInst.destroy();
+    chartInst = new Chart(ctx, {
+      type:'doughnut',
+      data:{ labels, datasets:[{ data:values, backgroundColor:colors, borderWidth:0 }] },
+      options:{ plugins:{ legend:{ position:'bottom', labels:{ color:'#6b6f80',font:{size:11},boxWidth:10,padding:8 }}}, cutout:'60%', responsive:true }
+    });
+  } catch(e) {}
+}
+loadChart();
+</script>
+</body>
+</html>
