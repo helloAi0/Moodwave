@@ -1,77 +1,130 @@
 "use client";
 import { useState } from "react";
 
-export default function Home() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+const SPOTIFY_CLIENT_ID = process.env.NEXT_PUBLIC_SPOTIFY_CLIENT_ID ?? "";
+const SPOTIFY_REDIRECT_URI =
+  process.env.NEXT_PUBLIC_SPOTIFY_REDIRECT_URI ?? "http://localhost:3000/callback";
 
-  const loginApp = async () => {
+type Tab = "login" | "register";
+
+export default function Home() {
+  const [tab, setTab]         = useState<Tab>("login");
+  const [email, setEmail]     = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError]     = useState("");
+  const [loading, setLoading] = useState(false);
+
+  // ── App auth ────────────────────────────────────────────────────────────
+  const handleAppAuth = async () => {
+    setError("");
+    if (!email || !password) {
+      setError("Please enter email and password.");
+      return;
+    }
+    setLoading(true);
     try {
-      const res = await fetch("http://127.0.0.1:8000/api/auth/login", {
+      const endpoint = tab === "login" ? "/api/auth/login" : "/api/auth/register";
+      const res = await fetch(`${API}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password })
+        body: JSON.stringify({ email, password }),
       });
+
       const data = await res.json();
-      
-      if (data.access_token) {
-        // Save the app token and route to the dashboard
-        localStorage.setItem("token", data.access_token);
-        window.location.href = "/dashboard";
-      } else { 
-        alert("Login failed: Invalid credentials"); 
+
+      if (!res.ok) {
+        setError(data.detail ?? "Authentication failed.");
+        return;
       }
-    } catch (err) { 
-      alert("Backend offline? Please ensure Docker is running."); 
+
+      localStorage.setItem("token", data.access_token);
+      window.location.href = "/dashboard";
+    } catch {
+      setError("Backend offline. Make sure Docker is running.");
+    } finally {
+      setLoading(false);
     }
   };
 
+  // ── Spotify implicit grant ───────────────────────────────────────────────
   const loginSpotify = () => {
-    const CLIENT_ID = "c38ef719fe7b4af3be72edd5784ebecd";
-    // 🎯 Note: Make sure http://localhost:3000/callback is registered in your Spotify Dashboard!
-    const REDIRECT_URI = "http://localhost:3000/callback";
-    const SCOPES = "streaming user-read-email user-read-private user-modify-playback-state";
-    const AUTH_ENDPOINT = "https://accounts.spotify.com/authorize";
-
-    // 🎯 DIRECT TOKEN FLOW (Implicit Grant - Bypasses backend)
-    window.location.href = 
-      `${AUTH_ENDPOINT}?client_id=${CLIENT_ID}` +
-      `&response_type=token&redirect_uri=${encodeURIComponent(REDIRECT_URI)}` +
-      `&scope=${encodeURIComponent(SCOPES)}&show_dialog=true`;
+    if (!SPOTIFY_CLIENT_ID) {
+      setError("NEXT_PUBLIC_SPOTIFY_CLIENT_ID is not set in .env.local");
+      return;
+    }
+    const SCOPES =
+      "streaming user-read-email user-read-private user-modify-playback-state";
+    window.location.href =
+      `https://accounts.spotify.com/authorize` +
+      `?client_id=${SPOTIFY_CLIENT_ID}` +
+      `&response_type=token` +
+      `&redirect_uri=${encodeURIComponent(SPOTIFY_REDIRECT_URI)}` +
+      `&scope=${encodeURIComponent(SCOPES)}` +
+      `&show_dialog=true`;
   };
 
   return (
     <div className="min-h-screen bg-slate-950 text-white flex flex-col items-center justify-center p-10 font-sans">
-      <h1 className="text-4xl font-black mb-8 italic">
-        MOODWAVE <span className="text-blue-500">RESET</span>
+      <h1 className="text-4xl font-black mb-2 italic">
+        MOOD<span className="text-blue-500">WAVE</span>
       </h1>
-      
+      <p className="text-slate-500 text-sm mb-8">Emotion-driven music therapy</p>
+
+      {/* Tab switcher */}
+      <div className="flex mb-6 bg-slate-800 rounded-lg p-1 gap-1">
+        {(["login", "register"] as Tab[]).map((t) => (
+          <button
+            key={t}
+            onClick={() => { setTab(t); setError(""); }}
+            className={`px-6 py-2 rounded-md text-sm font-bold transition-colors capitalize
+              ${tab === t ? "bg-blue-600 text-white" : "text-slate-400 hover:text-white"}`}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
+
       <div className="w-80 flex flex-col gap-4">
-        <input 
-          className="p-3 rounded-lg text-black outline-none focus:ring-2 focus:ring-blue-500" 
-          placeholder="Email" 
-          onChange={e => setEmail(e.target.value)} 
+        {error && (
+          <div className="bg-red-900/40 border border-red-500 text-red-300 text-sm px-4 py-2 rounded-lg">
+            {error}
+          </div>
+        )}
+
+        <input
+          className="p-3 rounded-lg bg-slate-800 text-white outline-none focus:ring-2 focus:ring-blue-500"
+          placeholder="Email"
+          type="email"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleAppAuth()}
         />
-        <input 
-          className="p-3 rounded-lg text-black outline-none focus:ring-2 focus:ring-blue-500" 
-          type="password" 
-          placeholder="Password" 
-          onChange={e => setPassword(e.target.value)} 
+        <input
+          className="p-3 rounded-lg bg-slate-800 text-white outline-none focus:ring-2 focus:ring-blue-500"
+          type="password"
+          placeholder={tab === "register" ? "Password (min 8 chars)" : "Password"}
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && handleAppAuth()}
         />
-        
-        <button 
-          className="bg-blue-600 hover:bg-blue-500 transition-colors p-3 rounded-lg font-bold shadow-lg" 
-          onClick={loginApp}
+
+        <button
+          className="bg-blue-600 hover:bg-blue-500 disabled:opacity-50 transition-colors p-3 rounded-lg font-bold shadow-lg capitalize"
+          onClick={handleAppAuth}
+          disabled={loading}
         >
-          App Login
+          {loading ? "Please wait…" : tab === "login" ? "Login" : "Create Account"}
         </button>
-        
-        <div className="h-px bg-slate-800 my-4 relative flex items-center justify-center">
-          <span className="bg-slate-950 px-3 text-xs text-slate-500 font-bold">OR</span>
+
+        <div className="relative flex items-center my-2">
+          <div className="flex-1 h-px bg-slate-700" />
+          <span className="mx-3 text-xs text-slate-500 font-bold">OR</span>
+          <div className="flex-1 h-px bg-slate-700" />
         </div>
-        
-        <button 
-          className="bg-[#1DB954] hover:bg-[#1ed760] transition-colors p-3 rounded-lg font-bold text-black shadow-lg" 
+
+        <button
+          className="bg-[#1DB954] hover:bg-[#1ed760] transition-colors p-3 rounded-lg font-bold text-black shadow-lg"
           onClick={loginSpotify}
         >
           Connect Spotify 🎧

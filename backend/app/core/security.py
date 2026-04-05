@@ -1,28 +1,29 @@
 from passlib.context import CryptContext
 from jose import jwt
-from datetime import datetime, timedelta
-
-SECRET_KEY = "supersecretkey"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
+from datetime import datetime, timedelta, timezone
+from app.core.config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-# 👉 Updated naming to match standard FastAPI conventions
-def get_password_hash(password: str):
-    """
-    Takes a plain text password and returns a secure BCrypt hash.
-    """
+
+def get_password_hash(password: str) -> str:
+    """Hash a plain-text password with bcrypt."""
     return pwd_context.hash(password)
 
-def verify_password(plain_password: str, hashed_password: str):
-    """
-    Compares a plain text password with a stored hash.
-    """
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """Compare a plain-text password against a stored bcrypt hash."""
     return pwd_context.verify(plain_password, hashed_password)
 
-def create_access_token(data: dict):
+
+def create_access_token(data: dict) -> str:
+    """
+    Create a signed JWT.
+    Always pass {"sub": str(user.id)} as data.
+    """
     to_encode = data.copy()
-    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = datetime.now(timezone.utc) + timedelta(
+        minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES
+    )
     to_encode.update({"exp": expire})
-    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)

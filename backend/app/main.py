@@ -1,56 +1,79 @@
+"""
+MoodWave FastAPI application entry point.
+"""
 import asyncio
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.core.config import settings
 from app.db.session import engine, Base
+
+# ── CRITICAL: import all models so SQLAlchemy registers them with Base.metadata
+# Without these imports, create_all() produces no tables.
+from app.models.user import User          # noqa: F401
+from app.models.session_log import SessionLog  # noqa: F401
+
 from app.api.routes import auth, sessions
 from app.services.socket_manager import socket_app
 
-app = FastAPI(title="MoodWave API")
 
-# --- 1. CORS CONFIGURATION ---
-# Allows your Next.js frontend (127.0.0.1:3000) to communicate with this API
+# ── Lifespan (replaces deprecated @app.on_event) ──────────────────────────────
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Run startup logic, then yield, then run shutdown logic."""
+    # ── Startup ──
+    print("🚀 MoodWave starting up …")
+    retries = 10
+    while retries > 0:
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+            print("✅ Database tables created / verified.")
+            break
+        except Exception as exc:
+            retries -= 1
+            print(f"⏳ Waiting for Postgres … ({retries} retries left) — {exc}")
+            await asyncio.sleep(3)
+
+    if retries == 0:
+        print("❌ FATAL: Could not connect to database after 10 attempts.")
+
+    yield  # application runs here
+
+    # ── Shutdown ──
+    print("🛑 MoodWave shutting down …")
+    await engine.dispose()
+
+
+# ── App factory ────────────────────────────────────────────────────────────────
+app = FastAPI(
+    title="MoodWave API",
+    version="2.5.0",
+    description="Emotion-driven adaptive music therapy backend.",
+    lifespan=lifespan,
+)
+
+# ── CORS ───────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# --- 2. ROUTE REGISTRATION ---
-# 🎯 This includes your /register, /login, and the NEW /callback route
-app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
-app.include_router(sessions.router, prefix="/api/sessions", tags=["Therapy"])
+# ── Routes ─────────────────────────────────────────────────────────────────────
+app.include_router(auth.router,     prefix="/api/auth",     tags=["Authentication"])
+app.include_router(sessions.router, prefix="/api/sessions", tags=["Therapy Session"])
 
-# --- 3. SOCKET.IO MOUNTING ---
-# Mounts the real-time engine to /ws (e.g., http://127.0.0.1:8000/ws)
+# ── Socket.IO (ASGI sub-app) ───────────────────────────────────────────────────
+# Mounted at /ws — clients connect with path="/ws/socket.io"
 app.mount("/ws", socket_app)
 
-# --- 4. STARTUP SEQUENCE (Database Migration) ---
-@app.on_event("startup")
-async def startup():
-    """
-    Ensures the database is ready and tables are created before the app starts.
-    Includes a retry loop for Docker environments.
-    """
-    print("🚀 MoodWave Startup sequence initiated...")
-    retries = 10
-    while retries > 0:
-        try:
-            async with engine.begin() as conn:
-                # Creates tables based on your SQLAlchemy models (User, SessionLog, etc.)
-                await conn.run_sync(Base.metadata.create_all)
-            print("✅ SUCCESS: Database tables created/verified.")
-            break
-        except Exception as e:
-            retries -= 1
-            print(f"🔄 Waiting for Postgres... ({retries} retries left)")
-            await asyncio.sleep(3)
-    
-    if retries == 0:
-        print("❌ FATAL: Could not connect to database after 10 attempts.")
 
-@app.get("/")
+# ── Health check ───────────────────────────────────────────────────────────────
+@app.get("/", tags=["Health"])
 async def root():
-    return {"message": "MoodWave API is Live", "version": "2.4.12"}
+    return {"status": "ok", "service": "MoodWave API", "version": "2.5.0"}

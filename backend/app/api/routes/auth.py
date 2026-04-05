@@ -1,59 +1,59 @@
-import base64
-import httpx
-import os
-from typing import Optional
-from fastapi import APIRouter, Request, Depends, HTTPException
-from fastapi.responses import RedirectResponse
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
-# --- CONFIG (Hardcoded for testing - move to .env later) ---
-CLIENT_ID = "c38ef719fe7b4af3be72edd5784ebecd"
-CLIENT_SECRET = "aa207248e129489bad731bed057dab0b"
-REDIRECT_URI = "http://127.0.0.1:8000/api/auth/callback"
-FRONTEND_DASHBOARD = "http://localhost:3000/dashboard"
+from app.db.session import get_db
+from app.models.user import User
+from app.core.security import get_password_hash, verify_password, create_access_token
 
 router = APIRouter()
 
+# ✅ REGISTER
+@router.post("/register")
+async def register(data: dict, db: AsyncSession = Depends(get_db)):
+    email = data.get("email")
+    password = data.get("password")
+
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Missing fields")
+
+    result = await db.execute(select(User).where(User.email == email))
+    existing = result.scalar_one_or_none()
+
+    if existing:
+        raise HTTPException(status_code=400, detail="User already exists")
+
+    user = User(
+        email=email,
+        # 👇 HERE IS THE FIX 👇
+        hashed_password=get_password_hash(password) 
+    )
+
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+
+    return {"id": user.id, "email": user.email}
+
+
+# ✅ LOGIN
+@router.post("/login")
+async def login(data: dict, db: AsyncSession = Depends(get_db)):
+    email = data.get("email")
+    password = data.get("password")
+
+    result = await db.execute(select(User).where(User.email == email))
+    user = result.scalar_one_or_none()
+
+    if not user or not verify_password(password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    token = create_access_token({"sub": user.email})
+
+    return {"access_token": token}
+
+
+# ✅ SPOTIFY CALLBACK (KEEP THIS)
 @router.get("/callback")
-async def spotify_callback(code: Optional[str] = None, error: Optional[str] = None):
-    """
-    🎯 THE REDIRECT FIX:
-    This route receives the code from Spotify, exchanges it for a token,
-    and sends it to the frontend dashboard exactly ONCE.
-    """
-    
-    # 1. Handle user cancellation or Spotify errors
-    if error or not code:
-        print(f"⚠️ Spotify Auth Failed: {error}")
-        return RedirectResponse(url=f"http://localhost:3000/?error=spotify_denied")
-
-    # 2. Prepare the Basic Auth Header
-    auth_str = f"{CLIENT_ID}:{CLIENT_SECRET}"
-    auth_b64 = base64.b64encode(auth_str.encode()).decode()
-
-    async with httpx.AsyncClient() as client:
-        # 3. Exchange code for Access Token
-        response = await client.post(
-            "https://accounts.spotify.com/api/token",
-            data={
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": REDIRECT_URI,
-            },
-            headers={
-                "Authorization": f"Basic {auth_b64}",
-                "Content-Type": "application/x-www-form-urlencoded"
-            }
-        )
-    
-    token_data = response.json()
-    
-    # Check if the exchange actually worked
-    if "error" in token_data:
-        print(f"❌ Token Exchange Error: {token_data}")
-        return RedirectResponse(url=f"http://localhost:3000/?error=token_failed")
-
-    access_token = token_data.get("access_token")
-    
-    # ✅ SUCCESS: Redirect to dashboard with the token in the query params.
-    # The Frontend Dashboard will grab this and save it to localStorage.
-    return RedirectResponse(url=f"{FRONTEND_DASHBOARD}?spotify_token={access_token}")
+async def spotify_callback():
+    return {"message": "Spotify callback endpoint"}  
