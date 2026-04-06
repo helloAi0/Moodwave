@@ -16,19 +16,29 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 hours
 
-    # ── Spotify OAuth ─────────────────────────────────────────────────────
+    # ── Spotify OAuth (optional - currently not used, but accept if in .env) ─────────────────────────────────
     SPOTIFY_CLIENT_ID: str = ""
     SPOTIFY_CLIENT_SECRET: str = ""
     SPOTIFY_REDIRECT_URI: str = "http://127.0.0.1:8000/api/auth/callback"
     FRONTEND_DASHBOARD: str = "http://localhost:3000/dashboard"
     FRONTEND_BASE: str = "http://localhost:3000"
 
-    # ── CORS ──────────────────────────────────────────────────────────────
-    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    # ── CORS ───────────────────────────────────────────────────────────
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:5000",
+        "http://127.0.0.1:5000",
+        "http://localhost:8000",
+    ]
+
+    # ── Redis ─────────────────────────────────────────────────────────
+    REDIS_URL: str = "redis://redis:6379/0"
 
     class Config:
-        env_file = ".env"          # reads .env in the backend root when running locally
+        env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"  # ← THIS IS KEY: Ignore extra env variables
 
 
 @lru_cache()

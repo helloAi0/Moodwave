@@ -1,4 +1,8 @@
-from fastapi import APIRouter, Depends, HTTPException
+"""
+auth.py — Authentication routes (register, login).
+"""
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -8,52 +12,94 @@ from app.core.security import get_password_hash, verify_password, create_access_
 
 router = APIRouter()
 
-# ✅ REGISTER
-@router.post("/register")
-async def register(data: dict, db: AsyncSession = Depends(get_db)):
-    email = data.get("email")
-    password = data.get("password")
 
-    if not email or not password:
-        raise HTTPException(status_code=400, detail="Missing fields")
+# ── Request/Response Schemas ─────────────────────────────────────────────
+class RegisterRequest(BaseModel):
+    email: EmailStr
+    password: str
 
-    result = await db.execute(select(User).where(User.email == email))
+
+class LoginRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+
+
+class UserResponse(BaseModel):
+    id: int
+    email: str
+    is_active: bool
+
+    class Config:
+        from_attributes = True
+
+
+# ── REGISTER ─────────────────────────────────────────────────────────────
+@router.post("/register", response_model=UserResponse)
+async def register(
+    payload: RegisterRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Register a new user."""
+    # Check if user already exists
+    result = await db.execute(select(User).where(User.email == payload.email))
     existing = result.scalar_one_or_none()
 
     if existing:
-        raise HTTPException(status_code=400, detail="User already exists")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered",
+        )
 
+    # Create new user
     user = User(
-        email=email,
-        # 👇 HERE IS THE FIX 👇
-        hashed_password=get_password_hash(password) 
+        email=payload.email,
+        hashed_password=get_password_hash(payload.password),
+        is_active=True,
     )
 
     db.add(user)
     await db.commit()
     await db.refresh(user)
 
-    return {"id": user.id, "email": user.email}
+    return user
 
 
-# ✅ LOGIN
-@router.post("/login")
-async def login(data: dict, db: AsyncSession = Depends(get_db)):
-    email = data.get("email")
-    password = data.get("password")
-
-    result = await db.execute(select(User).where(User.email == email))
+# ── LOGIN ────────────────────────────────────────────────────────────────
+@router.post("/login", response_model=TokenResponse)
+async def login(
+    payload: LoginRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """Login and receive JWT token."""
+    # Find user
+    result = await db.execute(select(User).where(User.email == payload.email))
     user = result.scalar_one_or_none()
 
-    if not user or not verify_password(password, user.hashed_password):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
+    if not user or not verify_password(payload.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+        )
 
-    token = create_access_token({"sub": user.email})
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account is inactive",
+        )
 
-    return {"access_token": token}
+    # Create JWT token
+    access_token = create_access_token(data={"sub": str(user.id)})
+
+    return {"access_token": access_token, "token_type": "bearer"}
 
 
-# ✅ SPOTIFY CALLBACK (KEEP THIS)
+# ── SPOTIFY CALLBACK ────────────────────────────────────────────────────
 @router.get("/callback")
 async def spotify_callback():
-    return {"message": "Spotify callback endpoint"}  
+    """Spotify OAuth2 callback endpoint (placeholder)."""
+    return {"message": "Spotify callback received"}

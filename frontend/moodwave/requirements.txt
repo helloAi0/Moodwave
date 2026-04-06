@@ -1,16 +1,21 @@
-# MoodWave Desktop Web — Python dependencies
-# Install with:  pip install -r requirements.txt
-
+# --- MOODWAVE FRONTEND ONLY ---
 flask==3.0.3
 flask-socketio==5.3.6
-eventlet==0.36.1          # async driver for flask-socketio
-
+eventlet==0.36.1
 opencv-python==4.9.0.80
-deepface==0.0.92
-tensorflow-cpu==2.16.1    # lightweight CPU-only inference
+pygame==2.5.2
 
-pygame==2.5.2             # for music playback with crossfade
-
-# deepface auto-installs most of its deps, but these help on some systems:
+# --- ML/EMOTION ENGINE ---
+deepface==0.0.79
+tensorflow==2.15.0
+tf-keras==2.15.0
 numpy>=1.24,<2.0
 pillow>=10.0
+
+# --- CLIENT COMMUNICATION ---
+requests>=2.27.1
+python-socketio>=5.0.2
+python-engineio>=4.8.0
+
+# --- UTILITIES ---
+python-dotenv==1.0.0

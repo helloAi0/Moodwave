@@ -1,31 +1,58 @@
-import socketio
+"""
+socket_manager.py — Simplified socket management without python-socketio.
 
-# ASGI compatible Socket.IO server
-sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins='*')
-socket_app = socketio.ASGIApp(sio)
+For now, we'll use a simple in-memory event system.
+In production, replace with proper Socket.IO or WebSocket library.
+"""
 
-@sio.event
-async def connect(sid, environ):
-    print(f"🚀 Client Connected: {sid}")
-    await sio.emit('status', {'msg': 'Connected to MoodWave Engine'}, to=sid)
+class SocketManager:
+    """Simple in-memory socket manager for broadcasting events."""
 
-@sio.event
-async def set_therapy_target(sid, data):
-    target = data.get("target", "calm")
-    print(f"🎯 Target updated to {target} for session {sid}")
+    def __init__(self):
+        self.clients = set()
 
-async def broadcast_mood(data: dict):
-    """
-    Pushes live data to the UI.
-    'data' should contain the engine results (BPM, Mood, etc.)
-    """
-    # 1. Send the raw analysis (for charts/labels)
-    await sio.emit('mood_update', data)
-    
-    # 2. Send the specific audio triggers (for Tone.js)
-    # We use 'audio_update' so the frontend knows to change the sound
-    if "audio" in data:
-        await sio.emit('audio_update', data["audio"])
-    else:
-        # Fallback if the engine returns the whole dict
-        await sio.emit('audio_update', data)
+    async def emit(self, event: str, data: dict, to: str = None):
+        """Emit an event to clients (stub for now)."""
+        print(f"[Socket] Event '{event}' would be emitted to clients: {data}")
+
+    async def on(self, event: str, handler):
+        """Register event handler (stub for now)."""
+        print(f"[Socket] Handler registered for event '{event}'")
+
+    async def connect(self, client_id: str):
+        """Handle client connection."""
+        self.clients.add(client_id)
+        print(f"[Socket] Client {client_id} connected")
+
+    async def disconnect(self, client_id: str):
+        """Handle client disconnection."""
+        self.clients.discard(client_id)
+        print(f"[Socket] Client {client_id} disconnected")
+
+
+# Global instance
+sio = SocketManager()
+
+
+# ASGI app stub (will be handled by FastAPI's built-in capabilities)
+class ASGIApp:
+    def __init__(self, manager):
+        self.manager = manager
+
+    async def __call__(self, scope, receive, send):
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [[b"content-type", b"application/json"]],
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": b'{"status":"socket_manager_active"}',
+            }
+        )
+
+
+socket_app = ASGIApp(sio)

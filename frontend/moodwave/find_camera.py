@@ -1,32 +1,40 @@
 """
-find_camera.py  —  Run this ONCE to find your Iriun camera index.
-Usage:  python find_camera.py
-
-It prints every available camera index and opens a preview window for each.
-The one showing your phone = the index to put in app.py.
-Press any key to move to the next camera. Close the window when done.
+find_camera.py — Discover which camera index Iriun is on your system.
+Run this FIRST to get the correct CAMERA_INDEX for sensor.py and app.py
 """
 import cv2
+import sys
 
-print("Scanning camera indices 0-5...\n")
+def find_cameras():
+    """Try all camera indices and report which ones work."""
+    print("🔍 Scanning for available cameras...")
+    print("-" * 50)
+    
+    available = []
+    for i in range(10):  # Check indices 0-9
+        cap = cv2.VideoCapture(i)
+        if cap.isOpened():
+            ret, frame = cap.read()
+            if ret and frame is not None:
+                w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+                h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+                print(f"✅ Camera {i}: {w}x{h}")
+                available.append(i)
+                cap.release()
+            else:
+                cap.release()
+    
+    if not available:
+        print("❌ No cameras found!")
+        sys.exit(1)
+    
+    print("-" * 50)
+    print(f"\n📌 IMPORTANT: Edit these files and set CAMERA_INDEX = {available[0]}")
+    print(f"   Files to update:")
+    print(f"     • sensor.py (line 24)")
+    print(f"     • frontend/moodwave/app.py (line 44)")
+    print(f"\n   Then run: python sensor.py")
+    return available[0]
 
-for index in range(6):
-    cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)   # CAP_DSHOW = Windows DirectShow
-    if not cap.isOpened():
-        print(f"  Index {index}: not found")
-        continue
-
-    ret, frame = cap.read()
-    if ret and frame is not None:
-        w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        print(f"  Index {index}: FOUND  ({w}x{h}) — showing preview, press any key...")
-        cv2.imshow(f"Camera {index} — press any key", frame)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-    else:
-        print(f"  Index {index}: opened but no frame")
-
-    cap.release()
-
-print("\nDone. Use the index that showed your phone in app.py -> CAMERA_SOURCE")
+if __name__ == "__main__":
+    idx = find_cameras()

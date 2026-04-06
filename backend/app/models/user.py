@@ -1,13 +1,20 @@
-from sqlalchemy import Column, String, Boolean
-from sqlalchemy.orm import Mapped, mapped_column
+"""
+user.py — User model for authentication & preferences.
+"""
+from sqlalchemy import Column, Integer, String, DateTime, Boolean
+from sqlalchemy.sql import func
 from app.db.session import Base
 
+
 class User(Base):
+    """User account model."""
+
     __tablename__ = "users"
 
-    id: Mapped[int] = mapped_column(primary_key=True, index=True)
-    email: Mapped[str] = mapped_column(String, unique=True, index=True)
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
-
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
-    target_mood: Mapped[str] = mapped_column(String, default="calm")  # ✅ ADD THIS
+    is_active = Column(Boolean, default=True)
+    target_mood = Column(String, default="calm")
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())

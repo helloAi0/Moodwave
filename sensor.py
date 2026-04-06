@@ -18,14 +18,19 @@ import cv2
 import requests
 from deepface import DeepFace
 
-# ── Configuration ─────────────────────────────────────────────────────────────
-API_BASE_URL    = os.getenv("API_BASE_URL",   "http://localhost:8000/api/sessions")
-APP_TOKEN       = os.getenv("APP_TOKEN",      "")   # paste your JWT here if /analyze requires auth
-CAMERA_INDEX    = int(os.getenv("CAMERA_INDEX", "0"))
-DETECT_EVERY_N  = int(os.getenv("DETECT_EVERY_N", "15"))  # run AI every N frames ← CRITICAL fix
-JPEG_QUALITY    = int(os.getenv("JPEG_QUALITY",   "75"))
-WINDOW_TITLE    = "MoodWave Sensor — press Q to quit"
-# ─────────────────────────────────────────────────────────────────────────────
+# ── Configuration ─────────────────────────────────────────────────────────
+API_BASE_URL = os.getenv(
+    "API_BASE_URL", "http://localhost:8000/api/sessions"
+)
+APP_TOKEN = os.getenv("APP_TOKEN", "")  # paste your JWT here if /analyze requires auth
+
+# 👇 UPDATED: Hardcoded to Camera Index 0
+CAMERA_INDEX = 0
+
+DETECT_EVERY_N = int(os.getenv("DETECT_EVERY_N", "15"))  # run AI every N frames
+JPEG_QUALITY = int(os.getenv("JPEG_QUALITY", "75"))
+WINDOW_TITLE = "MoodWave Sensor — press Q to quit"
+# ────────────────────────────────────────────────────────────────────────
 
 _headers = {"Content-Type": "application/json"}
 if APP_TOKEN:
@@ -37,11 +42,12 @@ def send_emotion(emotion: str) -> None:
     POST the detected emotion to the backend in a daemon thread so the
     video loop is never blocked by network latency.
     """
+
     def _post():
         try:
             resp = requests.post(
                 f"{API_BASE_URL}/analyze",
-                json={"emotion": emotion},   # ← uses request BODY, not query param
+                json={"emotion": emotion},  # ← uses request BODY, not query param
                 headers=_headers,
                 timeout=3.0,
             )
@@ -62,11 +68,13 @@ def run_sensor() -> None:
         print("   Run  python find_camera.py  to discover the correct index.")
         return
 
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)   # always grab the freshest frame
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # always grab the freshest frame
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     print(f"🎥 Camera {CAMERA_INDEX} opened at {w}×{h}")
-    print(f"   Analysing every {DETECT_EVERY_N} frames — press Q to quit.")
+    print(
+        f"   Analysing every {DETECT_EVERY_N} frames — press Q to quit."
+    )
 
     frame_n = 0
     last_emotion = "neutral"
@@ -100,8 +108,13 @@ def run_sensor() -> None:
 
             # ── Overlay emotion label ──────────────────────────────────────
             cv2.putText(
-                frame, f"Emotion: {last_emotion}", (10, 30),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2,
+                frame,
+                f"Emotion: {last_emotion}",
+                (10, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.9,
+                (0, 255, 0),
+                2,
             )
             cv2.imshow(WINDOW_TITLE, frame)
 
