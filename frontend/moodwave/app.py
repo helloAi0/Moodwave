@@ -22,7 +22,7 @@ from flask_socketio import SocketIO
 
 from emotion_engine import EmotionEngine
 from music_player import MusicPlayer
-from database import init_db, log_mood, get_weekly_summary
+from database import ThreadSafeDatabase
 
 # ── App setup ───────────────────────────────────────────────────────────
 app = Flask(__name__)
@@ -31,7 +31,7 @@ io = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
 
 engine = EmotionEngine()
 player = MusicPlayer()
-db = init_db()
+db = ThreadSafeDatabase()
 
 # ────────────────────────────────────────────────────────────────────────
 # CAMERA SOURCE — edit this one value:
@@ -42,7 +42,7 @@ db = init_db()
 # ────────────────────────────────────────────────────────────────────────
 CAMERA_SOURCE = 0  # <-- change this after running find_camera.py
 JPEG_QUALITY = 75  # lower = faster stream, higher = sharper image
-DETECT_EVERY_N = 10  # run DeepFace every N frames
+DETECT_EVERY_N = 15  # run emotion detection every N frames
 
 # ── Shared state (Producer -> Consumers) ─────────────────────────────────
 last_jpeg_bytes = None  # pre-encoded JPEG bytes — ready to stream instantly
@@ -75,7 +75,7 @@ def camera_loop():
     Single thread that:
       - Opens the camera ONCE (avoids dual-client errors)
       - Encodes every frame to JPEG once -> last_jpeg_bytes
-      - Every DETECT_EVERY_N frames: runs DeepFace + sends to backend
+      - Every DETECT_EVERY_N frames: detects emotion + sends to backend
     """
     global last_jpeg_bytes, _running
 
@@ -84,7 +84,7 @@ def camera_loop():
     cap = cv2.VideoCapture(CAMERA_SOURCE, backend)
 
     if not cap.isOpened():
-        print(f"[Camera] ERROR: Cannot open source '{CAMERA_SOURCE}'")
+        print(f"[Camera] ❌ ERROR: Cannot open source '{CAMERA_SOURCE}'")
         print("[Camera] Tip: run  python find_camera.py  to find the right index.")
         with jpeg_lock:
             last_jpeg_bytes = _make_placeholder("Camera not found. Check index.")
@@ -93,85 +93,97 @@ def camera_loop():
 
     # Minimise internal buffer so we always get the LATEST frame
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-    # Request 720p — Iriun supports it; falls back gracefully if not
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    
+    # ⚠️ IMPORTANT: Don't set resolution — let camera auto-detect
+    # cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    # cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    print(f"[Camera] Opened '{CAMERA_SOURCE}' at {w}x{h}")
+    print(f"[Camera] ✅ Opened source {CAMERA_SOURCE} at {w}×{h}")
+    print(f"[Camera] Detecting emotion every {DETECT_EVERY_N} frames")
 
     frame_n = 0
     encode_params = [cv2.IMWRITE_JPEG_QUALITY, JPEG_QUALITY]
+    last_emotion = "neutral"
 
-    while _running:
-        ret, frame = cap.read()
-        if not ret or frame is None:
-            time.sleep(0.05)
-            continue
+    try:
+        while _running:
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                time.sleep(0.05)
+                continue
 
-        frame_n += 1
+            frame_n += 1
 
-        # ── Encode ONCE, store for the MJPEG consumer ─────────────────────
-        ret_enc, buf = cv2.imencode(".jpg", frame, encode_params)
-        if ret_enc:
-            with jpeg_lock:
-                last_jpeg_bytes = buf.tobytes()
+            # ── Encode ONCE, store for the MJPEG consumer ─────────────────────
+            ret_enc, buf = cv2.imencode(".jpg", frame, encode_params)
+            if ret_enc:
+                with jpeg_lock:
+                    last_jpeg_bytes = buf.tobytes()
 
-        # ── AI detection every N frames ───────────────────────────────────
-        if frame_n % DETECT_EVERY_N == 0:
-            try:
-                # Detect emotion locally
-                mood = engine.detect(frame)
-
-                # Send to backend for Iso engine processing
+            # ── AI detection every N frames ───────────────────────────────────
+            if frame_n % DETECT_EVERY_N == 0:
                 try:
-                    resp = requests.post(
-                        f"{BACKEND_URL}/api/sessions/analyze",
-                        json={"emotion": mood},
-                        timeout=2.0,
-                    )
-                    if resp.status_code == 200:
-                        result = resp.json()
-                        track = result.get("track", "unknown")
-                        progress = result.get("progress", 0)
+                    # Detect emotion locally
+                    mood = engine.detect(frame)
+                    
+                    if mood != last_emotion:
+                        last_emotion = mood
+                        print(f"[Emotion] Detected: {mood}")
 
-                        # Play music locally
-                        player.play(track)
+                        # Send to backend for Iso engine processing
+                        try:
+                            resp = requests.post(
+                                f"{BACKEND_URL}/api/sessions/analyze",
+                                json={"emotion": mood},
+                                timeout=2.0,
+                            )
+                            if resp.status_code == 200:
+                                result = resp.json()
+                                track = result.get("track", "unknown")
+                                progress = result.get("progress", 0)
 
-                        # Log to local DB
-                        log_mood(db, mood, track, progress)
+                                # Play music locally
+                                player.play(track)
 
-                        # Emit to UI via SocketIO
-                        io.emit(
-                            "mood_update",
-                            {
-                                "mood": mood,
-                                "track": track,
-                                "progress": round(progress * 100),
-                            },
-                        )
-                except requests.exceptions.RequestException as e:
-                    print(f"[Backend] ⚠ Unreachable: {e}")
-                    # Fall back to local engine
-                    track = engine.get_next_track(mood)
-                    progress = engine.get_transition_progress()
-                    player.play(track)
-                    log_mood(db, mood, track, progress)
-                    io.emit(
-                        "mood_update",
-                        {
-                            "mood": mood,
-                            "track": track,
-                            "progress": round(progress * 100),
-                        },
-                    )
+                                # Log to local DB (thread-safe)
+                                db.log_mood(mood, track, progress)
 
-            except Exception as exc:
-                print(f"[AI] ⚠ Error: {exc}")
+                                # Emit to UI via SocketIO
+                                io.emit(
+                                    "mood_update",
+                                    {
+                                        "mood": mood,
+                                        "track": track,
+                                        "progress": round(progress * 100),
+                                    },
+                                )
+                                print(f"[Backend] ✅ Sent emotion & received: {track}")
+                            else:
+                                print(f"[Backend] ⚠ Error: {resp.status_code}")
+                        except requests.exceptions.RequestException as e:
+                            print(f"[Backend] ⚠ Unreachable: {e}")
+                            # Fall back to local engine
+                            track = engine.get_next_track(mood)
+                            progress = engine.get_transition_progress()
+                            player.play(track)
+                            db.log_mood(mood, track, progress)
+                            io.emit(
+                                "mood_update",
+                                {
+                                    "mood": mood,
+                                    "track": track,
+                                    "progress": round(progress * 100),
+                                },
+                            )
 
-    cap.release()
-    print("[Camera] Stream closed.")
+                except Exception as exc:
+                    print(f"[AI] ⚠ Error: {exc}")
+
+    finally:
+        cap.release()
+        print("[Camera] 🛑 Stream closed.")
 
 
 # ── MJPEG consumer — just hands out pre-built bytes ───────────────────────
@@ -210,7 +222,7 @@ def video_feed():
 
 @app.route("/history")
 def history():
-    return {"weekly": get_weekly_summary(db)}
+    return {"weekly": db.get_weekly_summary()}
 
 
 # ── SocketIO ───────────────────────────────────────────────────────────
@@ -220,12 +232,12 @@ def on_connect():
     if not _running:
         _running = True
         threading.Thread(target=camera_loop, daemon=True).start()
-        print("[SocketIO] Client connected — camera loop started.")
+        print("[SocketIO] 🔌 Client connected — camera loop started.")
 
 
 @io.on("disconnect")
 def on_disconnect():
-    print("[SocketIO] Client disconnected.")
+    print("[SocketIO] 🔌 Client disconnected.")
 
 
 # ── Entry point ──────────────────────────────────────────────────────────
@@ -237,11 +249,10 @@ if __name__ == "__main__":
     )
     print("  Open browser  : http://localhost:5000")
     print("  Find cam index: python find_camera.py")
+    print(f"  Backend URL   : {BACKEND_URL}")
     print("=" * 52)
     try:
         io.run(app, host="0.0.0.0", port=5000, debug=False)
     finally:
         _running = False
         player.stop()
-        if db:
-            db.close()
